@@ -13,7 +13,7 @@ import logging
 import voluptuous as vol
 from threading import Thread
 
-__version__ = '0.2.1'
+__version__ = '0.2.2'
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,8 +24,11 @@ CONF_PORT = 'port'
 
 ATTR_DEVICE_MAC_ID = "Device MAC ID"
 ATTR_METER_MAC_ID = "Meter MAC ID"
-ATTR_TEIR = "Price Teir"
+ATTR_TIER = "Price Tier"
 ATTR_PRICE = "Price"
+ATTR_SUMMATION = "Net kWh"
+ATTR_DELIVERED = "Delivered kWh"
+ATTR_RECEIVED = "Received kWh"
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Required(CONF_PORT): cv.string,
@@ -52,7 +55,7 @@ class EMU2Sensor(Entity):
         self._baudrate = 115200
         self._timeout = 1
         self._icon = 'mdi:flash'
-        self._unit_of_measurement = "kWh"
+        self._unit_of_measurement = "kW"
         
         self._serial_thread = None
         self._serial_thread_isEnabled = True
@@ -62,8 +65,11 @@ class EMU2Sensor(Entity):
         self._data = {}                
         self._data[ATTR_DEVICE_MAC_ID] = None
         self._data[ATTR_METER_MAC_ID] = None
-        self._data[ATTR_TEIR] = None
+        self._data[ATTR_TIER] = None
         self._data[ATTR_PRICE] = None
+        self._data[ATTR_SUMMATION] = None
+        self._data[ATTR_DELIVERED] = None
+        self._data[ATTR_RECEIVED] = None
 
     @property
     def name(self):
@@ -74,8 +80,11 @@ class EMU2Sensor(Entity):
         return {
             ATTR_DEVICE_MAC_ID: self._data.get(ATTR_DEVICE_MAC_ID),
             ATTR_METER_MAC_ID: self._data.get(ATTR_METER_MAC_ID),
-            ATTR_TEIR: self._data.get(ATTR_TEIR),
+            ATTR_TIER: self._data.get(ATTR_TIER),
             ATTR_PRICE: self._data.get(ATTR_PRICE),
+            ATTR_SUMMATION: self._data.get(ATTR_SUMMATION),
+            ATTR_DELIVERED: self._data.get(ATTR_DELIVERED),
+            ATTR_RECEIVED: self._data.get(ATTR_RECEIVED),
         }
         
     @property
@@ -128,6 +137,7 @@ class EMU2Sensor(Entity):
                                 
                     if xmlTree.tag == 'InstantaneousDemand':
                         demand = int(xmlTree.find('Demand').text, 16)
+                        demand = -(demand & 0x80000000) | (demand & 0x7fffffff)
                         multiplier = int(xmlTree.find('Multiplier').text, 16)
                         divisor = int(xmlTree.find('Divisor').text, 16)
                         digitsRight = int(xmlTree.find('DigitsRight').text, 16)
@@ -147,9 +157,27 @@ class EMU2Sensor(Entity):
                         trailingDigits = int(xmlTree.find('TrailingDigits').text, 16)
                         self._data[ATTR_PRICE] = priceRaw / pow(10, trailingDigits)
 
-                        self._data[ATTR_TEIR] = int(xmlTree.find('Tier').text, 16)
+                        self._data[ATTR_TIER] = int(xmlTree.find('Tier').text, 16)
                         
                         _LOGGER.debug("PriceCluster: %s", self._data[ATTR_PRICE])
+                    elif xmlTree.tag == 'CurrentSummationDelivered':
+                        
+                        delivered = int(xmlTree.find('SummationDelivered').text, 16)
+                        delivered *= int(xmlTree.find('Multiplier').text, 16)
+                        delivered /= int(xmlTree.find('Divisor').text, 16)
+                        self._data[ATTR_DELIVERED] = delivered
+                        
+                        received = int(xmlTree.find('SummationReceived').text, 16)
+                        received *= int(xmlTree.find('Multiplier').text, 16)
+                        received /= int(xmlTree.find('Divisor').text, 16)
+                        self._data[ATTR_RECEIVED] = received
+                        
+                        energy = int(xmlTree.find('SummationDelivered').text, 16)
+                        energy -= int(xmlTree.find('SummationReceived').text, 16)
+                        energy *= int(xmlTree.find('Multiplier').text, 16)
+                        energy /= int(xmlTree.find('Divisor').text, 16)
+                        energy = round(energy, int(xmlTree.find('DigitsRight').text, 16))
+                        self._data[ATTR_SUMMATION] = energy
             else:
                 time.sleep(0.5)
 
